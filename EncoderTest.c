@@ -46,6 +46,7 @@ typedef struct {
 
     unsigned int  encode_frame_num;
     unsigned int  encode_format;
+    VENC_PIXEL_FMT  encode_color_format;
 
     unsigned int src_size;
     unsigned int dst_size;
@@ -69,6 +70,7 @@ typedef enum {
     SRC_SIZE,
     DST_SIZE,
     COMPARE_FILE,
+    COLOR_FORMAT,
     INVALID
 }ARGUMENT_T;
 
@@ -89,12 +91,14 @@ static const argument_t ArgumentMapping[] =
         "After encoder n frames, encoder stop" },
     { "-f",  "--encode_format",  ENCODE_FORMAT,
         "0:h264 encoder, 1:jpeg_encoder" },
+	{ "-c",  "--input_colorformat",  COLOR_FORMAT,
+        "0: NV12, 1: NV21, 2: I420, 3: YV12" },    
     { "-o",  "--output",  OUTPUT,
         "output file path" },
     { "-s",  "--srcsize",  SRC_SIZE,
-        "src_size,can be 1080,720,480" },
+        "src_size,can be 1080,720,480,360" },
     { "-d",  "--dstsize",  DST_SIZE,
-        "dst_size,can be 1080,720,480" },
+        "dst_size,can be 1080,720,480,360" },
 };
 
 int yu12_nv12(unsigned int width, unsigned int height, unsigned char *addr_uv,
@@ -175,6 +179,9 @@ void ParseArgument(encode_param_t *encode_param, char *argument, char *value)
         case ENCODE_FORMAT:
             sscanf(value, "%u", &encode_param->encode_format);
             break;
+		case COLOR_FORMAT:
+			sscanf(value, "%u", &encode_param->encode_color_format);
+			break;
         case OUTPUT:
             memset(encode_param->output_file, 0, sizeof(encode_param->output_file));
             sscanf(value, "%255s", encode_param->output_file);
@@ -182,7 +189,7 @@ void ParseArgument(encode_param_t *encode_param, char *argument, char *value)
             break;
         case SRC_SIZE:
             sscanf(value, "%u", &encode_param->src_size);
-            logd(" get src_size: %dp ", encode_param->src_size);
+            printf(" get src_size: %dp \n", encode_param->src_size);
             if(encode_param->src_size == 1080)
             {
                 encode_param->src_width = 1920;
@@ -198,6 +205,11 @@ void ParseArgument(encode_param_t *encode_param, char *argument, char *value)
                 encode_param->src_width = 640;
                 encode_param->src_height = 480;
             }
+            else if(encode_param->src_size == 360)
+            {
+                encode_param->src_width = 640;
+                encode_param->src_height = 360;
+            }
             else
             {
                 encode_param->src_width = 1280;
@@ -208,7 +220,7 @@ void ParseArgument(encode_param_t *encode_param, char *argument, char *value)
             break;
         case DST_SIZE:
             sscanf(value, "%u", &encode_param->dst_size);
-            logd(" get dst_size: %dp ", encode_param->dst_size);
+            printf(" get dst_size: %dp \n", encode_param->dst_size);
             if(encode_param->dst_size == 1080)
             {
                 encode_param->dst_width = 1920;
@@ -223,6 +235,11 @@ void ParseArgument(encode_param_t *encode_param, char *argument, char *value)
             {
                 encode_param->dst_width = 640;
                 encode_param->dst_height = 480;
+            }
+            else if(encode_param->dst_size == 360)
+            {
+                encode_param->dst_width = 640;
+                encode_param->dst_height = 352;
             }
             else
             {
@@ -301,6 +318,7 @@ int main(int argc, char** argv)
 
     encode_param.encode_format = VENC_CODEC_H264;
     encode_param.encode_frame_num = 200;
+	encode_param.encode_color_format = VENC_PIXEL_YUV420P;
 
     strcpy((char*)encode_param.intput_file,        "/data/camera/720p-30zhen.yuv");
     strcpy((char*)encode_param.output_file,        "/data/camera/720p.264");
@@ -320,7 +338,7 @@ int main(int argc, char** argv)
         return 0;
     }
 
-
+	printf("----src w %d, h %d, dst w %d, h %d ----\n", encode_param.src_width, encode_param.src_height, encode_param.dst_width, encode_param.dst_height);
     //intraRefresh
     sIntraRefresh.bEnable = 1;
     sIntraRefresh.nBlockNumber = 10;
@@ -335,7 +353,6 @@ int main(int argc, char** argv)
     h264Param.nBitrate = encode_param.bit_rate;
     h264Param.nFramerate = encode_param.frame_rate;
     h264Param.nCodingMode = VENC_FRAME_CODING;
-    //h264Param.nCodingMode = VENC_FIELD_CODING;
 
     h264Param.nMaxKeyInterval = encode_param.maxKeyFrame;
     h264Param.sProfileLevel.nProfile = VENC_H264ProfileMain;
@@ -381,7 +398,7 @@ int main(int argc, char** argv)
     //the format of yuv file is yuv420p,
     //but the old ic only support the yuv420sp,
     //so use the func yu12_nv12() to config all the format.
-    baseConfig.eInputFormat = VENC_PIXEL_YUV420SP;
+    baseConfig.eInputFormat = encode_param.encode_color_format;
 
     bufferParam.nSizeY = baseConfig.nInputWidth*baseConfig.nInputHeight;
     bufferParam.nSizeC = baseConfig.nInputWidth*baseConfig.nInputHeight/2;
@@ -422,18 +439,6 @@ int main(int argc, char** argv)
 
     AllocInputBuffer(pVideoEnc, &bufferParam);
 
-    if(baseConfig.eInputFormat == VENC_PIXEL_YUV420SP)
-    {
-        uv_tmp_buffer = (unsigned char*)malloc(baseConfig.nInputWidth*baseConfig.nInputHeight/2);
-        if(uv_tmp_buffer == NULL)
-        {
-            loge("malloc uv_tmp_buffer fail\n");
-            fclose(out_file);
-            fclose(in_file);
-            return -1;
-        }
-    }
-
 
     unsigned int testNumber = 0;
 
@@ -456,12 +461,6 @@ int main(int argc, char** argv)
                          baseConfig.nInputWidth*baseConfig.nInputHeight, in_file);
                 size2 = fread(inputBuffer.pAddrVirC, 1,
                          baseConfig.nInputWidth*baseConfig.nInputHeight/2, in_file);
-            }
-
-            if(baseConfig.eInputFormat == VENC_PIXEL_YUV420SP)
-            {
-                yu12_nv12(baseConfig.nInputWidth, baseConfig.nInputHeight,
-                     inputBuffer.pAddrVirC, uv_tmp_buffer);
             }
         }
 
@@ -500,21 +499,6 @@ int main(int argc, char** argv)
         }
 
         FreeOneBitStreamFrame(pVideoEnc, &outputBuffer);
-
-        if(h264Param.nCodingMode==VENC_FIELD_CODING && encode_param.encode_format==VENC_CODEC_H264)
-        {
-            GetOneBitstreamFrame(pVideoEnc, &outputBuffer);
-            //logi("size: %d,%d", outputBuffer.nSize0,outputBuffer.nSize1);
-
-            fwrite(outputBuffer.pData0, 1, outputBuffer.nSize0, out_file);
-
-            if(outputBuffer.nSize1)
-            {
-                fwrite(outputBuffer.pData1, 1, outputBuffer.nSize1, out_file);
-            }
-
-            FreeOneBitStreamFrame(pVideoEnc, &outputBuffer);
-        }
 
         testNumber++;
     }
